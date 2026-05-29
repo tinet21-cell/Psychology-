@@ -1,14 +1,15 @@
 import os
 import sys
+import time
 import datetime
 import requests
+from urllib.parse import quote
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-GEMINI_MODEL = "gemini-2.0-flash"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+TEXT_API = "https://text.pollinations.ai/"
+IMAGE_API = "https://image.pollinations.ai/prompt/"
 
 TOPICS = [
     "емоційний інтелект і робота з емоціями",
@@ -33,44 +34,92 @@ def pick_topic():
     return TOPICS[datetime.date.today().toordinal() % len(TOPICS)]
 
 
+def ask_text(prompt, timeout=120):
+    url = TEXT_API + quote(prompt)
+    last = None
+    for _ in range(3):
+        try:
+            r = requests.get(url, params={"model": "openai"}, timeout=timeout)
+            r.raise_for_status()
+            return r.text.strip()
+        except Exception as e:
+            last = e
+            time.sleep(5)
+    raise last
+
+
 def generate_post(topic):
     prompt = (
         "Ти редактор україномовного телеграм-каналу з психології. "
         f"Напиши короткий теплий пост на тему: «{topic}». "
-        "Українською, 120-200 слів, із заголовком, 2-3 абзацами і порадою чи питанням у кінці. "
-        "Підтримуючий тон, без складних термінів. Це науково-популярний контент, не діагностика. "
-        "Додай 3-4 хештеги. Без Markdown-розмітки, звичайний текст, емодзі дозволені. "
+        "Українською, 80-130 слів, не більше 800 символів. "
+        "Заголовок, 2 абзаци, у кінці порада або питання. "
+        "Підтримуючий тон, без складних термінів, науково-популярно, не діагностика. "
+        "Додай 3 хештеги. Без markdown-розмітки, звичайний текст, емодзі дозволені. "
         "Поверни лише текст поста."
     )
-    resp = requests.post(
-        GEMINI_URL,
-        params={"key": GEMINI_API_KEY},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=60,
+    return ask_text(prompt)
+
+
+def make_image_prompt(topic):
+    try:
+        p = ask_text(
+            "Translate this psychology theme into a short English prompt (max 12 words) "
+            "for a calm minimalist abstract illustration, soft pastel colors. "
+            f"Theme: {topic}. Return only the prompt.",
+            timeout=60,
+        )
+        return p.replace("\n", " ").strip()
+    except Exception:
+        return "calm minimalist abstract psychology illustration, soft pastel colors"
+
+
+def get_image(image_prompt):
+    url = IMAGE_API + quote(image_prompt)
+    r = requests.get(
+        url,
+        params={"width": 1024, "height": 1024, "nologo": "true", "model": "flux"},
+        timeout=180,
     )
-    resp.raise_for_status()
-    data = resp.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    r.raise_for_status()
+    return r.content
 
 
-def send_to_telegram(text):
+def send_photo(image_bytes, caption):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    files = {"photo": ("post.jpg", image_bytes, "image/jpeg")}
+    data = {"chat_id": CHANNEL_ID, "caption": caption[:1024]}
+    r = requests.post(url, data=data, files=files, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def send_text(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    resp = requests.post(
+    r = requests.post(
         url,
         json={"chat_id": CHANNEL_ID, "text": text, "disable_web_page_preview": True},
         timeout=30,
     )
-    resp.raise_for_status()
-    return resp.json()
+    r.raise_for_status()
+    return r.json()
 
 
 def main():
     topic = pick_topic()
-    print("Тема дня:", topic)
+    print("Тема:", topic)
     post = generate_post(topic)
     print("Пост:\n", post)
-    result = send_to_telegram(post)
-    print("Опубліковано. message_id:", result["result"]["message_id"])
+    try:
+        img_prompt = make_image_prompt(topic)
+        print("Image prompt:", img_prompt)
+        image = get_image(img_prompt)
+        send_photo(image, post)
+        print("Опубліковано з картинкою.")
+    except Exception as e:
+        print("Без картинки, шлю текстом:", e, file=sys.stderr)
+        send_text(post)
+        print("Опубліковано текстом.")
 
 
 if __name__ == "__main__":
