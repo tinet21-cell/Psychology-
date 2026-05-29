@@ -8,7 +8,7 @@ from urllib.parse import quote
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 
-TEXT_API = "https://text.pollinations.ai/"
+TEXT_API = "https://text.pollinations.ai/openai"
 IMAGE_API = "https://image.pollinations.ai/prompt/"
 
 TOPICS = [
@@ -35,13 +35,17 @@ def pick_topic():
 
 
 def ask_text(prompt, timeout=120):
-    url = TEXT_API + quote(prompt)
+    body = {
+        "model": "openai",
+        "messages": [{"role": "user", "content": prompt}],
+    }
     last = None
     for _ in range(3):
         try:
-            r = requests.get(url, params={"model": "openai"}, timeout=timeout)
+            r = requests.post(TEXT_API, json=body, timeout=timeout)
             r.raise_for_status()
-            return r.text.strip()
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
         except Exception as e:
             last = e
             time.sleep(5)
@@ -56,7 +60,7 @@ def generate_post(topic):
         "Заголовок, 2 абзаци, у кінці порада або питання. "
         "Підтримуючий тон, без складних термінів, науково-популярно, не діагностика. "
         "Додай 3 хештеги. Без markdown-розмітки, звичайний текст, емодзі дозволені. "
-        "Поверни лише текст поста."
+        "Поверни ЛИШЕ готовий текст поста, без жодних пояснень чи міркувань."
     )
     return ask_text(prompt)
 
@@ -66,7 +70,7 @@ def make_image_prompt(topic):
         p = ask_text(
             "Translate this psychology theme into a short English prompt (max 12 words) "
             "for a calm minimalist abstract illustration, soft pastel colors. "
-            f"Theme: {topic}. Return only the prompt.",
+            f"Theme: {topic}. Return only the prompt, nothing else.",
             timeout=60,
         )
         return p.replace("\n", " ").strip()
