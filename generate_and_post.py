@@ -29,40 +29,66 @@ TOPICS = [
     "робота з внутрішнім критиком",
 ]
 
-
-def pick_topic():
-    return TOPICS[datetime.date.today().toordinal() % len(TOPICS)]
+FORMATS = [
+    ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і коротко поясни, чому це працює."),
+    ("міф і правда", "Розвінчай поширений міф на тему «{topic}»: спочатку міф, потім як насправді."),
+    ("вправа", "Запропонуй просту вправу на 2-3 хвилини на тему «{topic}», покроково що робити."),
+    ("питання дня", "Постав читачам тепле рефлексивне питання на тему «{topic}», яке хочеться обговорити в коментарях. Додай 2-3 речення вступу."),
+    ("історія", "Розкажи коротку життєву історію або метафору на тему «{topic}» з мʼяким висновком."),
+    ("чек-лист", "Зроби короткий чек-лист на 4-5 пунктів на тему «{topic}», кожен пункт з нового рядка."),
+]
 
 
 def ask_text(prompt, timeout=120):
-    body = {
-        "model": "openai",
-        "messages": [{"role": "user", "content": prompt}],
-    }
+    body = {"model": "openai", "messages": [{"role": "user", "content": prompt}]}
     last = None
     for _ in range(3):
         try:
             r = requests.post(TEXT_API, json=body, timeout=timeout)
             r.raise_for_status()
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
+            return r.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
             last = e
             time.sleep(5)
     raise last
 
 
-def generate_post(topic):
+def generate_post(topic, fmt_instruction):
     prompt = (
-        "Ти редактор україномовного телеграм-каналу з психології. "
-        f"Напиши короткий теплий пост на тему: «{topic}». "
-        "Українською, 80-130 слів, не більше 800 символів. "
-        "Заголовок, 2 абзаци, у кінці порада або питання. "
-        "Підтримуючий тон, без складних термінів, науково-популярно, не діагностика. "
-        "Додай 3 хештеги. Без markdown-розмітки, звичайний текст, емодзі дозволені. "
-        "Поверни ЛИШЕ готовий текст поста, без жодних пояснень чи міркувань."
+        "Ти — практикуючий психолог, який веде теплий особистий телеграм-канал. "
+        "Пишеш живою розмовною українською, як до доброго знайомого. "
+        + fmt_instruction.format(topic=topic) + " "
+        "\n\nСТИЛЬ (дуже важливо):\n"
+        "- Пиши по-людськи, з емоцією, ніби ділишся власним спостереженням.\n"
+        "- Короткі живі речення, природний ритм.\n"
+        "- Звертайся на «ти», тепло й без повчального тону.\n"
+        "- Конкретика й образи замість абстракцій (приклад із життя краще за загальну фразу).\n\n"
+        "СУВОРО ЗАБОРОНЕНО (це ознаки штучного тексту):\n"
+        "- кліше: «У сучасному світі», «У нашому стрімкому житті», «Памʼятай: ти не один», "
+        "«Важливо памʼятати», «Кожен з нас», «Не варто забувати»;\n"
+        "- пафос, мотиваційні гасла, штучний оптимізм, знаки оклику через слово;\n"
+        "- канцелярит і складні терміни; сухі переліки без живої думки;\n"
+        "- однакові шаблонні зачини й кінцівки.\n\n"
+        "Обсяг до 800 символів. Почни з живого, не банального заголовка. "
+        "Додай 2-3 доречні хештеги в кінці. Без markdown-розмітки, звичайний текст, емодзі — помірно. "
+        "Поверни ЛИШЕ готовий текст поста, без пояснень."
     )
     return ask_text(prompt)
+
+
+def generate_poll(topic):
+    raw = ask_text(
+        f"Створи опитування для каналу з психології на тему «{topic}». "
+        "Поверни РІВНО у форматі: перший рядок — питання (до 90 символів), "
+        "далі 3-4 рядки — варіанти відповіді (кожен до 90 символів, з нового рядка). "
+        "Жива розмовна українська, без кліше. Без нумерації, без хештегів, без пояснень."
+    )
+    lines = [l.strip(" -•\t\"'") for l in raw.splitlines() if l.strip()]
+    question = lines[0][:300]
+    options = [l[:100] for l in lines[1:5]]
+    if len(options) < 2:
+        raise ValueError("замало варіантів")
+    return question, options
 
 
 def make_image_prompt(topic):
@@ -109,14 +135,38 @@ def send_text(text):
     return r.json()
 
 
+def send_poll(question, options):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll"
+    payload = {
+        "chat_id": CHANNEL_ID,
+        "question": question,
+        "options": [{"text": o} for o in options],
+        "is_anonymous": True,
+    }
+    r = requests.post(url, json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
 def main():
-    topic = pick_topic()
-    print("Тема:", topic)
-    post = generate_post(topic)
+    day = datetime.date.today().toordinal()
+    topic = TOPICS[day % len(TOPICS)]
+
+    if day % 5 == 0:
+        try:
+            q, opts = generate_poll(topic)
+            send_poll(q, opts)
+            print("Опубліковано опитування:", q)
+            return
+        except Exception as e:
+            print("Опитування не вдалося, роблю звичайний пост:", e, file=sys.stderr)
+
+    fmt_name, fmt_instr = FORMATS[day % len(FORMATS)]
+    print("Тема:", topic, "| Формат:", fmt_name)
+    post = generate_post(topic, fmt_instr)
     print("Пост:\n", post)
     try:
         img_prompt = make_image_prompt(topic)
-        print("Image prompt:", img_prompt)
         image = get_image(img_prompt)
         send_photo(image, post)
         print("Опубліковано з картинкою.")
