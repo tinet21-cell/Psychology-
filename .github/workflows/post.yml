@@ -1,4 +1,4 @@
-5name: Publish psychology post
+name: Publish psychology post
 
 on:
   schedule:
