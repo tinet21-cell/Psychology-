@@ -7,6 +7,13 @@ from urllib.parse import quote
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
+REVIEW_CHAT_ID = os.environ.get("TELEGRAM_REVIEW_CHAT_ID", "").strip()
+
+# Якщо заданий REVIEW_CHAT_ID — пост іде тобі в особисті на перевірку.
+# Якщо прибрати цей секрет — бот публікуватиме одразу в канал.
+TARGET = REVIEW_CHAT_ID if REVIEW_CHAT_ID else CHANNEL_ID
+
+PREFERRED_MODEL = "claude"  # можна змінити на "openai", "mistral"
 
 TEXT_API = "https://text.pollinations.ai/openai"
 IMAGE_API = "https://image.pollinations.ai/prompt/"
@@ -30,61 +37,62 @@ TOPICS = [
 ]
 
 FORMATS = [
-    ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і коротко поясни, чому це працює."),
-    ("міф і правда", "Розвінчай поширений міф на тему «{topic}»: спочатку міф, потім як насправді."),
-    ("вправа", "Запропонуй просту вправу на 2-3 хвилини на тему «{topic}», покроково що робити."),
-    ("питання дня", "Постав читачам тепле рефлексивне питання на тему «{topic}», яке хочеться обговорити в коментарях. Додай 2-3 речення вступу."),
-    ("історія", "Розкажи коротку життєву історію або метафору на тему «{topic}» з мʼяким висновком."),
-    ("чек-лист", "Зроби короткий чек-лист на 4-5 пунктів на тему «{topic}», кожен пункт з нового рядка."),
+    ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і поясни механізм: чому це працює на рівні психіки."),
+    ("міф і правда", "Розвінчай поширений міф на тему «{topic}»: спочатку міф, потім що насправді і чому."),
+    ("вправа", "Запропонуй просту вправу на 2-3 хвилини на тему «{topic}», покроково, з поясненням ефекту."),
+    ("питання дня", "Постав читачам глибоке рефлексивне питання на тему «{topic}» з живим вступом на 2-3 речення."),
+    ("історія", "Розкажи коротку правдоподібну життєву історію на тему «{topic}» з конкретним висновком."),
+    ("розбір", "Розбери одну типову ситуацію на тему «{topic}»: що відбувається всередині людини і що з цим робити."),
 ]
 
 
 def ask_text(prompt, timeout=120):
-    body = {"model": "openai", "messages": [{"role": "user", "content": prompt}]}
     last = None
-    for _ in range(3):
-        try:
-            r = requests.post(TEXT_API, json=body, timeout=timeout)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            last = e
-            time.sleep(5)
+    for model in (PREFERRED_MODEL, "openai"):
+        body = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+        for _ in range(2):
+            try:
+                r = requests.post(TEXT_API, json=body, timeout=timeout)
+                r.raise_for_status()
+                return r.json()["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                last = e
+                time.sleep(4)
     raise last
 
 
 def proofread(text):
     try:
-        fixed = ask_text(
-            "Виправ у цьому тексті всі граматичні, відмінкові й пунктуаційні помилки "
-            "українською мовою. Збережи зміст, тон, емодзі, хештеги і структуру без змін. "
-            "Не додавай нічого від себе. Поверни ЛИШЕ виправлений текст:\n\n" + text,
+        return ask_text(
+            "Виправ усі граматичні, відмінкові й пунктуаційні помилки українською. "
+            "Збережи зміст, тон, емодзі, хештеги і структуру. Нічого не додавай. "
+            "Поверни ЛИШЕ виправлений текст:\n\n" + text,
             timeout=90,
-        )
-        return fixed.strip()
+        ).strip()
     except Exception:
         return text
 
 
 def generate_post(topic, fmt_instruction):
     prompt = (
-        "Ти — практикуючий психолог, який веде теплий особистий телеграм-канал. "
+        "Ти — досвідчений практикуючий психолог, який веде особистий телеграм-канал. "
         "Пишеш живою розмовною українською, як до доброго знайомого. "
         + fmt_instruction.format(topic=topic) + " "
-        "\n\nСТИЛЬ (дуже важливо):\n"
-        "- Пиши по-людськи, з емоцією, ніби ділишся власним спостереженням.\n"
-        "- Короткі живі речення, природний ритм.\n"
-        "- Звертайся на «ти», тепло й без повчального тону.\n"
-        "- Конкретика й образи замість абстракцій.\n"
-        "- Бездоганна українська граматика й правильні відмінки.\n\n"
+        "\n\nГОЛОВНЕ — ГЛИБИНА І КОРИСТЬ:\n"
+        "- Одна чітка думка, а не загальні слова. Розкрий її по суті.\n"
+        "- Поясни конкретний механізм (що відбувається з емоціями/мисленням і чому).\n"
+        "- Додай 1 живий конкретний приклад або мікросценарій із реального життя.\n"
+        "- Дай конкретну дію, яку можна зробити вже сьогодні.\n"
+        "- Жодної «води», банальностей і пустих узагальнень.\n\n"
+        "СТИЛЬ:\n"
+        "- По-людськи, з емоцією, ніби ділишся власним спостереженням. Звертайся на «ти».\n"
+        "- Короткі живі речення, природний ритм. Бездоганна граматика.\n\n"
         "СУВОРО ЗАБОРОНЕНО (ознаки штучного тексту):\n"
         "- кліше: «У сучасному світі», «У нашому стрімкому житті», «Памʼятай: ти не один», "
         "«Важливо памʼятати», «Кожен з нас», «Не варто забувати»;\n"
-        "- пафос, мотиваційні гасла, штучний оптимізм, знаки оклику через слово;\n"
-        "- канцелярит і складні терміни; сухі переліки без живої думки;\n"
-        "- однакові шаблонні зачини й кінцівки.\n\n"
-        "Обсяг до 800 символів. Почни з живого, не банального заголовка. "
-        "Додай 2-3 доречні хештеги в кінці. Без markdown-розмітки, звичайний текст, емодзі — помірно. "
+        "- пафос, гасла, штучний оптимізм, абстрактні фрази без змісту, знаки оклику через слово.\n\n"
+        "Обсяг 400-900 символів. Почни з живого, не банального заголовка. "
+        "Додай 2-3 доречні хештеги в кінці. Без markdown, звичайний текст, емодзі помірно. "
         "Поверни ЛИШЕ готовий текст поста, без пояснень."
     )
     return proofread(ask_text(prompt))
@@ -93,10 +101,8 @@ def generate_post(topic, fmt_instruction):
 def generate_poll(topic):
     raw = ask_text(
         f"Створи опитування для каналу з психології на тему «{topic}». "
-        "Поверни РІВНО у форматі: перший рядок — питання (до 90 символів), "
-        "далі 3-4 рядки — варіанти відповіді (кожен до 90 символів, з нового рядка). "
-        "Жива розмовна українська, бездоганна граматика й відмінки, без кліше. "
-        "Без нумерації, без хештегів, без пояснень."
+        "Перший рядок — питання (до 90 символів), далі 3-4 рядки варіантів (до 90 символів кожен). "
+        "Жива українська, бездоганна граматика, без кліше. Без нумерації, хештегів і пояснень."
     )
     lines = [l.strip(" -•\t\"'") for l in raw.splitlines() if l.strip()]
     question = lines[0][:300]
@@ -108,24 +114,19 @@ def generate_poll(topic):
 
 def make_image_prompt(topic):
     try:
-        p = ask_text(
+        return ask_text(
             "Translate this psychology theme into a short English prompt (max 12 words) "
             "for a calm minimalist abstract illustration, soft pastel colors. "
-            f"Theme: {topic}. Return only the prompt, nothing else.",
+            f"Theme: {topic}. Return only the prompt.",
             timeout=60,
-        )
-        return p.replace("\n", " ").strip()
+        ).replace("\n", " ").strip()
     except Exception:
         return "calm minimalist abstract psychology illustration, soft pastel colors"
 
 
 def get_image(image_prompt):
     url = IMAGE_API + quote(image_prompt)
-    r = requests.get(
-        url,
-        params={"width": 1024, "height": 1024, "nologo": "true", "model": "flux"},
-        timeout=180,
-    )
+    r = requests.get(url, params={"width": 1024, "height": 1024, "nologo": "true", "model": "flux"}, timeout=180)
     r.raise_for_status()
     return r.content
 
@@ -133,7 +134,7 @@ def get_image(image_prompt):
 def send_photo(image_bytes, caption):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     files = {"photo": ("post.jpg", image_bytes, "image/jpeg")}
-    data = {"chat_id": CHANNEL_ID, "caption": caption[:1024]}
+    data = {"chat_id": TARGET, "caption": caption[:1024]}
     r = requests.post(url, data=data, files=files, timeout=60)
     r.raise_for_status()
     return r.json()
@@ -141,29 +142,23 @@ def send_photo(image_bytes, caption):
 
 def send_text(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(
-        url,
-        json={"chat_id": CHANNEL_ID, "text": text, "disable_web_page_preview": True},
-        timeout=30,
-    )
+    r = requests.post(url, json={"chat_id": TARGET, "text": text, "disable_web_page_preview": True}, timeout=30)
     r.raise_for_status()
     return r.json()
 
 
 def send_poll(question, options):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll"
-    payload = {
-        "chat_id": CHANNEL_ID,
-        "question": question,
-        "options": [{"text": o} for o in options],
-        "is_anonymous": True,
-    }
+    payload = {"chat_id": TARGET, "question": question,
+               "options": [{"text": o} for o in options], "is_anonymous": True}
     r = requests.post(url, json=payload, timeout=30)
     r.raise_for_status()
     return r.json()
 
 
 def main():
+    mode = "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал"
+    print("Режим:", mode)
     day = datetime.date.today().toordinal()
     topic = TOPICS[day % len(TOPICS)]
 
@@ -171,24 +166,23 @@ def main():
         try:
             q, opts = generate_poll(topic)
             send_poll(q, opts)
-            print("Опубліковано опитування:", q)
+            print("Опитування:", q)
             return
         except Exception as e:
-            print("Опитування не вдалося, роблю звичайний пост:", e, file=sys.stderr)
+            print("Опитування не вдалося:", e, file=sys.stderr)
 
     fmt_name, fmt_instr = FORMATS[day % len(FORMATS)]
     print("Тема:", topic, "| Формат:", fmt_name)
     post = generate_post(topic, fmt_instr)
     print("Пост:\n", post)
     try:
-        img_prompt = make_image_prompt(topic)
-        image = get_image(img_prompt)
+        image = get_image(make_image_prompt(topic))
         send_photo(image, post)
-        print("Опубліковано з картинкою.")
+        print("Надіслано з картинкою.")
     except Exception as e:
-        print("Без картинки, шлю текстом:", e, file=sys.stderr)
+        print("Без картинки:", e, file=sys.stderr)
         send_text(post)
-        print("Опубліковано текстом.")
+        print("Надіслано текстом.")
 
 
 if __name__ == "__main__":
