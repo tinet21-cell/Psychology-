@@ -36,8 +36,8 @@ FORMATS = [
     ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і поясни механізм: що саме відбувається в психіці й чому це працює."),
     ("міф і правда", "Візьми один поширений міф на тему «{topic}». Спершу назви міф, потім поясни, як насправді і чому."),
     ("вправа", "Опиши просту вправу на 2-3 хвилини на тему «{topic}»: покроково що робити і який ефект вона дає."),
-    ("питання дня", "Напиши живий вступ на 3-4 речення на тему «{topic}» і завершpostи глибоким рефлексивним питанням до читача."),
-    ("історія", "Розкажи коротку правдоподібну життєву історію (без вигаданих імен знаменитостей) на тему «{topic}» з конкретним психологічним висновком."),
+    ("питання дня", "Напиши живий вступ на 3-4 речення на тему «{topic}» і заверши глибоким рефлексивним питанням до читача."),
+    ("історія", "Розкажи коротку правдоподібну життєву історію на тему «{topic}» з конкретним психологічним висновком."),
     ("розбір", "Розбери одну типову життєву ситуацію на тему «{topic}»: що відбувається всередині людини і що конкретно з цим робити."),
 ]
 
@@ -51,11 +51,10 @@ IMAGE_STYLES = [
 ]
 
 
-def ask_text(prompt, effort="high", temperature=0.8, timeout=140):
+def ask_text(prompt, effort="medium", temperature=0.8, timeout=140):
     body = {
         "model": "openai",
         "messages": [{"role": "user", "content": prompt}],
-        "reasoning_effort": effort,
         "temperature": temperature,
     }
     last = None
@@ -63,10 +62,18 @@ def ask_text(prompt, effort="high", temperature=0.8, timeout=140):
         try:
             r = requests.post(TEXT_API, json=body, timeout=timeout)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
+            data = r.json()
+            msg = data["choices"][0]["message"]
+            text = msg.get("content")
+            if not text:
+                text = msg.get("reasoning_content") or msg.get("reasoning") or ""
+            text = (text or "").strip()
+            if text:
+                return text
+            last = ValueError("порожня відповідь")
         except Exception as e:
             last = e
-            time.sleep(5)
+        time.sleep(5)
     raise last
 
 
@@ -77,7 +84,7 @@ def proofread(text):
             "Зроби всі речення завершеними й природними. Не обривай думку. "
             "Збережи зміст, тон, емодзі, хештеги. Нічого не додавай. "
             "Поверни ЛИШЕ виправлений текст:\n\n" + text,
-            effort="low", temperature=0.3, timeout=100,
+            temperature=0.3, timeout=100,
         ).strip()
     except Exception:
         return text
@@ -103,7 +110,7 @@ def generate_post(topic, fmt_instruction):
         "вигадані слова, суржик.\n\n"
         "Обсяг 500-900 символів. Почни з живого, не банального заголовка. "
         "Додай 2-3 доречні хештеги в кінці. Без markdown, звичайний текст, емодзі помірно. "
-        "Поверни ЛИШЕ повністю готовий текст поста, без пояснень і без службових фраз."
+        "Поверни ЛИШЕ повністю готовий текст поста, без пояснень і службових фраз."
     )
     return proofread(ask_text(prompt))
 
@@ -113,7 +120,7 @@ def generate_poll(topic):
         f"Створи опитування для каналу з психології на тему «{topic}». "
         "Перший рядок — питання (до 90 символів), далі 3-4 рядки варіантів (до 90 символів). "
         "Жива українська, бездоганна граматика, без кліше. Без нумерації, хештегів, пояснень.",
-        effort="medium", temperature=0.7,
+        temperature=0.7,
     )
     lines = [l.strip(" -•\t\"'") for l in raw.splitlines() if l.strip()]
     question = lines[0][:300]
@@ -129,8 +136,8 @@ def make_image_prompt(topic):
         scene = ask_text(
             "Describe in ONE short English visual scene (max 14 words) that symbolically "
             f"represents this psychology theme: «{topic}». "
-            "A concrete metaphor or scene, no text, no faces close-up. Return only the scene.",
-            effort="low", temperature=1.0, timeout=60,
+            "A concrete metaphor or scene, no text, no close-up faces. Return only the scene.",
+            temperature=1.0, timeout=60,
         ).replace("\n", " ").strip()
     except Exception:
         scene = "a calm symbolic scene about inner balance"
@@ -178,10 +185,9 @@ def send_poll(question, options):
 
 def main():
     print("Режим:", "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал")
-    # випадкові тема й формат — кожен запуск свіжий
     topic = random.choice(TOPICS)
 
-    if random.random() < 0.2:  # ~1 з 5 — опитування
+    if random.random() < 0.2:
         try:
             q, opts = generate_poll(topic)
             send_poll(q, opts)
