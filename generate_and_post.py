@@ -2,7 +2,6 @@ import os
 import sys
 import time
 import random
-import datetime
 import requests
 from urllib.parse import quote
 
@@ -10,8 +9,10 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 REVIEW_CHAT_ID = os.environ.get("TELEGRAM_REVIEW_CHAT_ID", "").strip()
 TARGET = REVIEW_CHAT_ID if REVIEW_CHAT_ID else CHANNEL_ID
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-TEXT_API = "https://text.pollinations.ai/openai"
+GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 IMAGE_API = "https://image.pollinations.ai/prompt/"
 
 TOPICS = [
@@ -51,43 +52,22 @@ IMAGE_STYLES = [
 ]
 
 
-def ask_text(prompt, effort="medium", temperature=0.8, timeout=140):
+def ask_gemini(prompt, temperature=0.85, timeout=120):
     body = {
-        "model": "openai",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature},
     }
     last = None
     for _ in range(3):
         try:
-            r = requests.post(TEXT_API, json=body, timeout=timeout)
+            r = requests.post(GEMINI_URL, params={"key": GEMINI_API_KEY}, json=body, timeout=timeout)
             r.raise_for_status()
             data = r.json()
-            msg = data["choices"][0]["message"]
-            text = msg.get("content")
-            if not text:
-                text = msg.get("reasoning_content") or msg.get("reasoning") or ""
-            text = (text or "").strip()
-            if text:
-                return text
-            last = ValueError("порожня відповідь")
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
         except Exception as e:
             last = e
-        time.sleep(5)
+            time.sleep(6)
     raise last
-
-
-def proofread(text):
-    try:
-        return ask_text(
-            "Виправ усі граматичні, відмінкові й пунктуаційні помилки українською. "
-            "Зроби всі речення завершеними й природними. Не обривай думку. "
-            "Збережи зміст, тон, емодзі, хештеги. Нічого не додавай. "
-            "Поверни ЛИШЕ виправлений текст:\n\n" + text,
-            temperature=0.3, timeout=100,
-        ).strip()
-    except Exception:
-        return text
 
 
 def generate_post(topic, fmt_instruction):
@@ -97,26 +77,25 @@ def generate_post(topic, fmt_instruction):
         + fmt_instruction.format(topic=topic) + " "
         "\n\nЯКІСТЬ (головне):\n"
         "- Одна чітка думка, розкрита по суті. Жодної води й банальностей.\n"
-        "- Поясни конкретний психологічний механізм.\n"
-        "- Додай 1 живий конкретний приклад або мікросценарій.\n"
+        "- Поясни конкретний психологічний механізм простими словами.\n"
+        "- Додай 1 живий конкретний приклад або мікросценарій (без вигаданих імен знаменитостей).\n"
         "- Дай конкретну дію, яку можна зробити сьогодні.\n"
-        "- УСІ речення завершені. Не обривай думку на півслові.\n\n"
+        "- УСІ речення завершені, природні, без кальок і суржику.\n\n"
         "СТИЛЬ:\n"
-        "- Тепло, на «ти», без повчального тону. Природний ритм, бездоганна граматика.\n\n"
+        "- Тепло, на «ти», без повчального тону. Бездоганна українська граматика.\n\n"
         "ЗАБОРОНЕНО (ознаки штучного тексту):\n"
         "- кліше «У сучасному світі», «У нашому стрімкому житті», «Памʼятай: ти не один», "
         "«Важливо памʼятати», «Кожен з нас»;\n"
-        "- пафос, гасла, штучний оптимізм, абстракції без змісту, обірвані речення, "
-        "вигадані слова, суржик.\n\n"
+        "- пафос, гасла, штучний оптимізм, абстракції без змісту, обірвані речення.\n\n"
         "Обсяг 500-900 символів. Почни з живого, не банального заголовка. "
-        "Додай 2-3 доречні хештеги в кінці. Без markdown, звичайний текст, емодзі помірно. "
-        "Поверни ЛИШЕ повністю готовий текст поста, без пояснень і службових фраз."
+        "Додай 2-3 доречні хештеги в кінці. Без markdown-розмітки, звичайний текст, емодзі помірно. "
+        "Поверни ЛИШЕ повністю готовий текст поста, без пояснень."
     )
-    return proofread(ask_text(prompt))
+    return ask_gemini(prompt)
 
 
 def generate_poll(topic):
-    raw = ask_text(
+    raw = ask_gemini(
         f"Створи опитування для каналу з психології на тему «{topic}». "
         "Перший рядок — питання (до 90 символів), далі 3-4 рядки варіантів (до 90 символів). "
         "Жива українська, бездоганна граматика, без кліше. Без нумерації, хештегів, пояснень.",
@@ -133,10 +112,10 @@ def generate_poll(topic):
 def make_image_prompt(topic):
     style = random.choice(IMAGE_STYLES)
     try:
-        scene = ask_text(
-            "Describe in ONE short English visual scene (max 14 words) that symbolically "
-            f"represents this psychology theme: «{topic}». "
-            "A concrete metaphor or scene, no text, no close-up faces. Return only the scene.",
+        scene = ask_gemini(
+            "Опиши ОДНУ коротку англійською візуальну сцену (макс 14 слів), що символічно "
+            f"передає психологічну тему: «{topic}». Конкретна метафора, без тексту, без облич крупним планом. "
+            "Поверни лише англійський опис сцени.",
             temperature=1.0, timeout=60,
         ).replace("\n", " ").strip()
     except Exception:
@@ -148,10 +127,8 @@ def get_image(image_prompt):
     url = IMAGE_API + quote(image_prompt)
     r = requests.get(
         url,
-        params={
-            "width": 1024, "height": 1024, "nologo": "true",
-            "model": "flux", "seed": random.randint(1, 999999), "enhance": "true",
-        },
+        params={"width": 1024, "height": 1024, "nologo": "true",
+                "model": "flux", "seed": random.randint(1, 999999), "enhance": "true"},
         timeout=180,
     )
     r.raise_for_status()
