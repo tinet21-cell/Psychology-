@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import random
 import datetime
 import requests
 from urllib.parse import quote
@@ -8,12 +9,7 @@ from urllib.parse import quote
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 REVIEW_CHAT_ID = os.environ.get("TELEGRAM_REVIEW_CHAT_ID", "").strip()
-
-# Якщо заданий REVIEW_CHAT_ID — пост іде тобі в особисті на перевірку.
-# Якщо прибрати цей секрет — бот публікуватиме одразу в канал.
 TARGET = REVIEW_CHAT_ID if REVIEW_CHAT_ID else CHANNEL_ID
-
-PREFERRED_MODEL = "claude"  # можна змінити на "openai", "mistral"
 
 TEXT_API = "https://text.pollinations.ai/openai"
 IMAGE_API = "https://image.pollinations.ai/prompt/"
@@ -37,27 +33,40 @@ TOPICS = [
 ]
 
 FORMATS = [
-    ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і поясни механізм: чому це працює на рівні психіки."),
-    ("міф і правда", "Розвінчай поширений міф на тему «{topic}»: спочатку міф, потім що насправді і чому."),
-    ("вправа", "Запропонуй просту вправу на 2-3 хвилини на тему «{topic}», покроково, з поясненням ефекту."),
-    ("питання дня", "Постав читачам глибоке рефлексивне питання на тему «{topic}» з живим вступом на 2-3 речення."),
-    ("історія", "Розкажи коротку правдоподібну життєву історію на тему «{topic}» з конкретним висновком."),
-    ("розбір", "Розбери одну типову ситуацію на тему «{topic}»: що відбувається всередині людини і що з цим робити."),
+    ("порада", "Дай одну конкретну практичну пораду на тему «{topic}» і поясни механізм: що саме відбувається в психіці й чому це працює."),
+    ("міф і правда", "Візьми один поширений міф на тему «{topic}». Спершу назви міф, потім поясни, як насправді і чому."),
+    ("вправа", "Опиши просту вправу на 2-3 хвилини на тему «{topic}»: покроково що робити і який ефект вона дає."),
+    ("питання дня", "Напиши живий вступ на 3-4 речення на тему «{topic}» і завершpostи глибоким рефлексивним питанням до читача."),
+    ("історія", "Розкажи коротку правдоподібну життєву історію (без вигаданих імен знаменитостей) на тему «{topic}» з конкретним психологічним висновком."),
+    ("розбір", "Розбери одну типову життєву ситуацію на тему «{topic}»: що відбувається всередині людини і що конкретно з цим робити."),
+]
+
+IMAGE_STYLES = [
+    "minimalist line art illustration, single accent color on cream background",
+    "soft watercolor illustration, gentle muted tones",
+    "warm cozy flat illustration, editorial style",
+    "atmospheric photography, soft natural light, shallow depth of field",
+    "abstract paper-cut collage, calm earthy palette",
+    "dreamy gouache painting, soft pastel palette",
 ]
 
 
-def ask_text(prompt, timeout=120):
+def ask_text(prompt, effort="high", temperature=0.8, timeout=140):
+    body = {
+        "model": "openai",
+        "messages": [{"role": "user", "content": prompt}],
+        "reasoning_effort": effort,
+        "temperature": temperature,
+    }
     last = None
-    for model in (PREFERRED_MODEL, "openai"):
-        body = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-        for _ in range(2):
-            try:
-                r = requests.post(TEXT_API, json=body, timeout=timeout)
-                r.raise_for_status()
-                return r.json()["choices"][0]["message"]["content"].strip()
-            except Exception as e:
-                last = e
-                time.sleep(4)
+    for _ in range(3):
+        try:
+            r = requests.post(TEXT_API, json=body, timeout=timeout)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            last = e
+            time.sleep(5)
     raise last
 
 
@@ -65,9 +74,10 @@ def proofread(text):
     try:
         return ask_text(
             "Виправ усі граматичні, відмінкові й пунктуаційні помилки українською. "
-            "Збережи зміст, тон, емодзі, хештеги і структуру. Нічого не додавай. "
+            "Зроби всі речення завершеними й природними. Не обривай думку. "
+            "Збережи зміст, тон, емодзі, хештеги. Нічого не додавай. "
             "Поверни ЛИШЕ виправлений текст:\n\n" + text,
-            timeout=90,
+            effort="low", temperature=0.3, timeout=100,
         ).strip()
     except Exception:
         return text
@@ -75,25 +85,25 @@ def proofread(text):
 
 def generate_post(topic, fmt_instruction):
     prompt = (
-        "Ти — досвідчений практикуючий психолог, який веде особистий телеграм-канал. "
-        "Пишеш живою розмовною українською, як до доброго знайомого. "
+        "Ти — досвідчений практикуючий психолог, ведеш особистий телеграм-канал. "
+        "Пишеш живою, природною розмовною українською, як до доброго знайомого. "
         + fmt_instruction.format(topic=topic) + " "
-        "\n\nГОЛОВНЕ — ГЛИБИНА І КОРИСТЬ:\n"
-        "- Одна чітка думка, а не загальні слова. Розкрий її по суті.\n"
-        "- Поясни конкретний механізм (що відбувається з емоціями/мисленням і чому).\n"
-        "- Додай 1 живий конкретний приклад або мікросценарій із реального життя.\n"
-        "- Дай конкретну дію, яку можна зробити вже сьогодні.\n"
-        "- Жодної «води», банальностей і пустих узагальнень.\n\n"
+        "\n\nЯКІСТЬ (головне):\n"
+        "- Одна чітка думка, розкрита по суті. Жодної води й банальностей.\n"
+        "- Поясни конкретний психологічний механізм.\n"
+        "- Додай 1 живий конкретний приклад або мікросценарій.\n"
+        "- Дай конкретну дію, яку можна зробити сьогодні.\n"
+        "- УСІ речення завершені. Не обривай думку на півслові.\n\n"
         "СТИЛЬ:\n"
-        "- По-людськи, з емоцією, ніби ділишся власним спостереженням. Звертайся на «ти».\n"
-        "- Короткі живі речення, природний ритм. Бездоганна граматика.\n\n"
-        "СУВОРО ЗАБОРОНЕНО (ознаки штучного тексту):\n"
-        "- кліше: «У сучасному світі», «У нашому стрімкому житті», «Памʼятай: ти не один», "
-        "«Важливо памʼятати», «Кожен з нас», «Не варто забувати»;\n"
-        "- пафос, гасла, штучний оптимізм, абстрактні фрази без змісту, знаки оклику через слово.\n\n"
-        "Обсяг 400-900 символів. Почни з живого, не банального заголовка. "
+        "- Тепло, на «ти», без повчального тону. Природний ритм, бездоганна граматика.\n\n"
+        "ЗАБОРОНЕНО (ознаки штучного тексту):\n"
+        "- кліше «У сучасному світі», «У нашому стрімкому житті», «Памʼятай: ти не один», "
+        "«Важливо памʼятати», «Кожен з нас»;\n"
+        "- пафос, гасла, штучний оптимізм, абстракції без змісту, обірвані речення, "
+        "вигадані слова, суржик.\n\n"
+        "Обсяг 500-900 символів. Почни з живого, не банального заголовка. "
         "Додай 2-3 доречні хештеги в кінці. Без markdown, звичайний текст, емодзі помірно. "
-        "Поверни ЛИШЕ готовий текст поста, без пояснень."
+        "Поверни ЛИШЕ повністю готовий текст поста, без пояснень і без службових фраз."
     )
     return proofread(ask_text(prompt))
 
@@ -101,8 +111,9 @@ def generate_post(topic, fmt_instruction):
 def generate_poll(topic):
     raw = ask_text(
         f"Створи опитування для каналу з психології на тему «{topic}». "
-        "Перший рядок — питання (до 90 символів), далі 3-4 рядки варіантів (до 90 символів кожен). "
-        "Жива українська, бездоганна граматика, без кліше. Без нумерації, хештегів і пояснень."
+        "Перший рядок — питання (до 90 символів), далі 3-4 рядки варіантів (до 90 символів). "
+        "Жива українська, бездоганна граматика, без кліше. Без нумерації, хештегів, пояснень.",
+        effort="medium", temperature=0.7,
     )
     lines = [l.strip(" -•\t\"'") for l in raw.splitlines() if l.strip()]
     question = lines[0][:300]
@@ -113,20 +124,29 @@ def generate_poll(topic):
 
 
 def make_image_prompt(topic):
+    style = random.choice(IMAGE_STYLES)
     try:
-        return ask_text(
-            "Translate this psychology theme into a short English prompt (max 12 words) "
-            "for a calm minimalist abstract illustration, soft pastel colors. "
-            f"Theme: {topic}. Return only the prompt.",
-            timeout=60,
+        scene = ask_text(
+            "Describe in ONE short English visual scene (max 14 words) that symbolically "
+            f"represents this psychology theme: «{topic}». "
+            "A concrete metaphor or scene, no text, no faces close-up. Return only the scene.",
+            effort="low", temperature=1.0, timeout=60,
         ).replace("\n", " ").strip()
     except Exception:
-        return "calm minimalist abstract psychology illustration, soft pastel colors"
+        scene = "a calm symbolic scene about inner balance"
+    return f"{scene}, {style}, no text, high quality"
 
 
 def get_image(image_prompt):
     url = IMAGE_API + quote(image_prompt)
-    r = requests.get(url, params={"width": 1024, "height": 1024, "nologo": "true", "model": "flux"}, timeout=180)
+    r = requests.get(
+        url,
+        params={
+            "width": 1024, "height": 1024, "nologo": "true",
+            "model": "flux", "seed": random.randint(1, 999999), "enhance": "true",
+        },
+        timeout=180,
+    )
     r.raise_for_status()
     return r.content
 
@@ -157,12 +177,11 @@ def send_poll(question, options):
 
 
 def main():
-    mode = "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал"
-    print("Режим:", mode)
-    day = datetime.date.today().toordinal()
-    topic = TOPICS[day % len(TOPICS)]
+    print("Режим:", "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал")
+    # випадкові тема й формат — кожен запуск свіжий
+    topic = random.choice(TOPICS)
 
-    if day % 5 == 0:
+    if random.random() < 0.2:  # ~1 з 5 — опитування
         try:
             q, opts = generate_poll(topic)
             send_poll(q, opts)
@@ -171,7 +190,7 @@ def main():
         except Exception as e:
             print("Опитування не вдалося:", e, file=sys.stderr)
 
-    fmt_name, fmt_instr = FORMATS[day % len(FORMATS)]
+    fmt_name, fmt_instr = random.choice(FORMATS)
     print("Тема:", topic, "| Формат:", fmt_name)
     post = generate_post(topic, fmt_instr)
     print("Пост:\n", post)
