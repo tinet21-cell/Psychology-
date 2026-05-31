@@ -142,6 +142,38 @@ def generate_choice(topic):
     return ask_gemini(prompt, temperature=0.85)
 
 
+def generate_video_idea(topic):
+    prompt = (
+        "Ти — контент-менеджер психологічного телеграм-каналу. Тема: «" + topic + "». "
+        "Запропонуй ідею для короткого ВЕРТИКАЛЬНОГО відео (Reels/TikTok/Shorts), формат 9:16, "
+        "15-40 секунд, ФЕЙСЛЕС (без обличчя — кадри рук, природи, предметів, текст на екрані). "
+        "Гачок у перші 3 секунди.\n\n"
+        "Дай ДВА варіанти втілення однієї ідеї (звичайний текст, без markdown):\n\n"
+        "🎬 ІДЕЯ: (коротка назва)\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🤖 ВАРІАНТ 1 — ПРОМТ ДЛЯ AI-ВІДЕО\n"
+        "Готовий детальний промт англійською для генератора відео (Veo/Sora). "
+        "Обовʼязково вкажи: vertical 9:16 aspect ratio, атмосферна сцена БЕЗ людей або лише руки/деталі, "
+        "рух камери, освітлення, настрій. Дай одним абзацом, готовий до копіювання.\n"
+        "Текст на екран (українською): які фрази й коли показати.\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📱 ВАРІАНТ 2 — ПЛАН ЗЙОМКИ ТЕЛЕФОНОМ (фейслес)\n"
+        "Прості кадри без обличчя, які легко зняти самій. Формат:\n"
+        "⏱ Хронометраж\n"
+        "📐 Телефон ВЕРТИКАЛЬНО (9:16)\n"
+        "Кадри:\n"
+        "1. (що показати в кадрі — напр. руки, чашка, вікно — + текст на екрані)\n"
+        "2. ...\n"
+        "3. ...\n"
+        "📝 Повний текст субтитрів по черзі (бо відео без голосу — текст головний)\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🎵 Музика: (настрій + нагадай брати з бібліотеки Facebook/Instagram)\n"
+        "📲 Підпис до публікації: (1-2 речення + 3-4 хештеги)\n\n"
+        "Жива українська, тепло, психологічно змістовно, практично."
+    )
+    return ask_gemini(prompt, temperature=0.85)
+
+
 def generate_poll(topic):
     raw = ask_gemini(
         f"Створи опитування для каналу з психології на тему «{topic}». "
@@ -247,12 +279,11 @@ def send_poll(question, options):
     return r.json()
 
 
-def main():
-    print("Режим:", "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал")
+def send_main_content():
+    """Щоденний основний контент: пост / опитування / тест / обери-образ."""
     topic = random.choice(TOPICS)
     roll = random.random()
 
-    # ~12% опитування, ~12% тест, ~12% обери-образ, решта ~64% — звичайний пост
     if roll < 0.12:
         try:
             q, opts = generate_poll(topic)
@@ -266,26 +297,22 @@ def main():
         print("Режим: ТЕСТ | Тема:", topic)
         test = generate_test(topic)
         try:
-            image = get_image(make_image_prompt(topic))
-            send_photo(image, test)
+            send_photo(get_image(make_image_prompt(topic)), test)
             print("Надіслано тест з картинкою.")
         except Exception as e:
             print("Без картинки:", e, file=sys.stderr)
             send_text(test)
-            print("Надіслано тест текстом.")
         return
 
     elif roll < 0.36:
         print("Режим: ОБЕРИ ОБРАЗ | Тема:", topic)
         choice = generate_choice(topic)
         try:
-            image = get_image(make_choice_image_prompt())
-            send_photo(image, choice)
+            send_photo(get_image(make_choice_image_prompt()), choice)
             print("Надіслано обери-образ з картинкою.")
         except Exception as e:
             print("Без картинки:", e, file=sys.stderr)
             send_text(choice)
-            print("Надіслано обери-образ текстом.")
         return
 
     fmt_name, fmt_instr = random.choice(FORMATS)
@@ -293,13 +320,30 @@ def main():
     post = generate_post(topic, fmt_instr)
     print("Пост:\n", post)
     try:
-        image = get_image(make_image_prompt(topic))
-        send_photo(image, post)
-        print("Надіслано з картинкою.")
+        send_photo(get_image(make_image_prompt(topic)), post)
+        print("Надіслано пост з картинкою.")
     except Exception as e:
         print("Без картинки:", e, file=sys.stderr)
         send_text(post)
-        print("Надіслано текстом.")
+
+
+def send_daily_video():
+    """Щоденна фейслес відео-ідея окремим повідомленням."""
+    topic = random.choice(TOPICS)
+    print("Відео-ідея | Тема:", topic)
+    try:
+        idea = generate_video_idea(topic)
+        send_text("💡 ВІДЕО-ІДЕЯ ДНЯ (фейслес, вертикальне)\n\n" + idea)
+        print("Надіслано відео-ідею.")
+    except Exception as e:
+        print("Відео-ідея не вдалася:", e, file=sys.stderr)
+
+
+def main():
+    print("Режим:", "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал")
+    send_main_content()
+    time.sleep(2)
+    send_daily_video()
 
 
 if __name__ == "__main__":
