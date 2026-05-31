@@ -94,6 +94,54 @@ def generate_post(topic, fmt_instruction):
     return ask_gemini(prompt)
 
 
+def generate_test(topic):
+    prompt = (
+        "Ти — психолог. Склади короткий тест для самоперевірки на тему «" + topic + "» "
+        "для телеграм-каналу. Тест має спиратися на логіку реальних психологічних опитувальників "
+        "(на кшталт шкал самооцінки стану), бути коректним і обережним.\n\n"
+        "ФОРМАТ (звичайний текст, без markdown):\n"
+        "🧠 ТЕСТ: (коротка назва)\n\n"
+        "Інструкція: за кожне питання порахуй бали від 0 до 3 (0 — ніколи, 1 — інколи, 2 — часто, 3 — майже завжди).\n\n"
+        "1. (питання)\n"
+        "2. (питання)\n"
+        "3. (питання)\n"
+        "4. (питання)\n"
+        "5. (питання)\n\n"
+        "Підрахуй свої бали 👇\n\n"
+        "РЕЗУЛЬТАТ:\n"
+        "0-5 балів — (коротка інтерпретація + мʼяка порада)\n"
+        "6-10 балів — (інтерпретація + порада)\n"
+        "11-15 балів — (інтерпретація + порада, за потреби мʼяко порадь звернутись до фахівця)\n\n"
+        "ВАЖЛИВО наприкінці додай рядок: «Це тест для самоспостереження, а не медичний діагноз.»\n\n"
+        "Жива природна українська, тепло, на «ти», без кліше. Поверни ЛИШЕ готовий тест."
+    )
+    return ask_gemini(prompt, temperature=0.7)
+
+
+def generate_choice(topic):
+    prompt = (
+        "Ти — психолог. Зроби рефлексивну вправу формату «обери образ» на тему «" + topic + "» "
+        "для телеграм-каналу.\n\n"
+        "ФОРМАТ (звичайний текст, без markdown):\n"
+        "🃏 ОБЕРИ ОБРАЗ\n\n"
+        "(1-2 речення вступу: розслабся й обери образ, що відгукується найбільше)\n\n"
+        "1️⃣ (короткий опис образу)\n"
+        "2️⃣ (короткий опис образу)\n"
+        "3️⃣ (короткий опис образу)\n"
+        "4️⃣ (короткий опис образу)\n\n"
+        "Обрав(ла)? Дивись, що це може означати 👇\n\n"
+        "1️⃣ — (психологічна інтерпретація: що твій вибір говорить про стан/потребу, повʼязану з темою)\n"
+        "2️⃣ — (інтерпретація)\n"
+        "3️⃣ — (інтерпретація)\n"
+        "4️⃣ — (інтерпретація)\n\n"
+        "ВАЖЛИВО наприкінці додай рядок: «Це не передбачення, а привід поміркувати про себе.»\n\n"
+        "Образи прості й візуальні (предмети, природа, сцени). Інтерпретації теплі, підтримливі, "
+        "психологічно змістовні, без езотерики й містики. Жива українська, на «ти», без кліше. "
+        "Поверни ЛИШЕ готову вправу."
+    )
+    return ask_gemini(prompt, temperature=0.85)
+
+
 def generate_poll(topic):
     raw = ask_gemini(
         f"Створи опитування для каналу з психології на тему «{topic}». "
@@ -123,6 +171,11 @@ def make_image_prompt(topic):
     return f"{scene}, {style}, no text, high quality"
 
 
+def make_choice_image_prompt():
+    return ("four symbolic cards in a row, minimalist tarot-like illustration, "
+            "calm muted palette, soft watercolor, no text, high quality")
+
+
 def get_image(image_prompt):
     url = IMAGE_API + quote(image_prompt)
     r = requests.get(
@@ -135,20 +188,54 @@ def get_image(image_prompt):
     return r.content
 
 
+def split_text(text, limit=4000):
+    text = text.strip()
+    if len(text) <= limit:
+        return [text]
+    parts = []
+    while len(text) > limit:
+        chunk = text[:limit]
+        cut = chunk.rfind("\n\n")
+        if cut < limit * 0.5:
+            cut = chunk.rfind("\n")
+        if cut < limit * 0.5:
+            cut = chunk.rfind(". ")
+            if cut != -1:
+                cut += 1
+        if cut < limit * 0.5:
+            cut = limit
+        parts.append(text[:cut].strip())
+        text = text[cut:].strip()
+    if text:
+        parts.append(text)
+    return parts
+
+
 def send_photo(image_bytes, caption):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    if len(caption) <= 1024:
+        files = {"photo": ("post.jpg", image_bytes, "image/jpeg")}
+        data = {"chat_id": TARGET, "caption": caption}
+        r = requests.post(url, data=data, files=files, timeout=60)
+        r.raise_for_status()
+        return r.json()
     files = {"photo": ("post.jpg", image_bytes, "image/jpeg")}
-    data = {"chat_id": TARGET, "caption": caption[:1024]}
+    data = {"chat_id": TARGET}
     r = requests.post(url, data=data, files=files, timeout=60)
     r.raise_for_status()
+    send_text(caption)
     return r.json()
 
 
 def send_text(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(url, json={"chat_id": TARGET, "text": text, "disable_web_page_preview": True}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    last = None
+    for part in split_text(text, 4000):
+        r = requests.post(url, json={"chat_id": TARGET, "text": part,
+                                     "disable_web_page_preview": True}, timeout=30)
+        r.raise_for_status()
+        last = r.json()
+    return last
 
 
 def send_poll(question, options):
@@ -163,8 +250,10 @@ def send_poll(question, options):
 def main():
     print("Режим:", "ЧЕРНЕТКА в особисті" if REVIEW_CHAT_ID else "одразу в канал")
     topic = random.choice(TOPICS)
+    roll = random.random()
 
-    if random.random() < 0.2:
+    # ~12% опитування, ~12% тест, ~12% обери-образ, решта ~64% — звичайний пост
+    if roll < 0.12:
         try:
             q, opts = generate_poll(topic)
             send_poll(q, opts)
@@ -172,6 +261,32 @@ def main():
             return
         except Exception as e:
             print("Опитування не вдалося:", e, file=sys.stderr)
+
+    elif roll < 0.24:
+        print("Режим: ТЕСТ | Тема:", topic)
+        test = generate_test(topic)
+        try:
+            image = get_image(make_image_prompt(topic))
+            send_photo(image, test)
+            print("Надіслано тест з картинкою.")
+        except Exception as e:
+            print("Без картинки:", e, file=sys.stderr)
+            send_text(test)
+            print("Надіслано тест текстом.")
+        return
+
+    elif roll < 0.36:
+        print("Режим: ОБЕРИ ОБРАЗ | Тема:", topic)
+        choice = generate_choice(topic)
+        try:
+            image = get_image(make_choice_image_prompt())
+            send_photo(image, choice)
+            print("Надіслано обери-образ з картинкою.")
+        except Exception as e:
+            print("Без картинки:", e, file=sys.stderr)
+            send_text(choice)
+            print("Надіслано обери-образ текстом.")
+        return
 
     fmt_name, fmt_instr = random.choice(FORMATS)
     print("Тема:", topic, "| Формат:", fmt_name)
