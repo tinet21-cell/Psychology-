@@ -628,12 +628,9 @@ def send_support_content(theme, stage):
     label = "🎲 DREAMWAY-ПОСТ" if use_dreamway else "📝 ГОТОВИЙ ПОСТ ДЛЯ ПУБЛІКАЦІЇ"
 
     try:
-        send_photo(get_image(make_image_prompt(theme)), label + "
-
-" + post)
-    except Exception:
-        send_text(label + "
-
+    send_photo(get_image(make_image_prompt(theme)), label + "\n\n" + post)
+except Exception:
+    send_text(label + "\n\n" + post)
 " + post)
 
 
