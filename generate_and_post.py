@@ -575,64 +575,140 @@ def pick_theme_and_stage():
 
 def send_support_content(theme, stage):
     day = int(time.time() // 86400)
+
     if day % 4 == 1:
         carousel = generate_carousel(theme)
-        send_text("🎠 КАРУСЕЛЬ ДЛЯ INSTAGRAM/FB — тема: " + theme +
-                  "\n(оформи слайди в Canva → постни в Instagram, той самий файл — у Facebook)\n\n" + carousel)
+        send_text(
+            "🎠 КАРУСЕЛЬ ДЛЯ INSTAGRAM/FB — тема: "
+            + theme
+            + "\n\n"
+            + carousel
+        )
         print(">>> Надіслано карусель.", flush=True)
         return
+
     if day % 4 == 0:
         send_text(insight_scaffold())
         print(">>> Надіслано інсайт-каркас.", flush=True)
         return
+
     if day % 4 == 2:
         name, story = generate_story(theme)
         print("Сюжетний формат:", name, flush=True)
+
         try:
-            send_photo(get_image(make_image_prompt(theme)), story)
+            send_photo(
+                get_image(make_image_prompt(theme)),
+                story
+            )
         except Exception:
             send_text(story)
+
         return
+
     if stage == "залучення":
         roll = random.random()
+
         if roll < 0.2:
             try:
                 q, opts = generate_poll(theme)
                 send_poll(q, opts)
                 return
             except Exception as e:
-                print("Опитування не вдалося:", e, file=sys.stderr)
+                print(
+                    "Опитування не вдалося:",
+                    e,
+                    file=sys.stderr
+                )
+
         elif roll < 0.4:
             t = generate_test(theme)
+
             try:
-                send_photo(get_image(make_image_prompt(theme)), t)
+                send_photo(
+                    get_image(make_image_prompt(theme)),
+                    t
+                )
             except Exception:
                 send_text(t)
+
             return
+
         elif roll < 0.6:
             c = generate_choice(theme)
+
             try:
-                send_photo(get_image(make_choice_image_prompt()), c)
+                send_photo(
+                    get_image(make_choice_image_prompt()),
+                    c
+                )
             except Exception:
                 send_text(c)
+
             return
-    day = int(time.time() // 86400)
+
+    # ========================================================
+    # ГОТОВИЙ ПОСТ ДЛЯ АУДИТОРІЇ
+    # ========================================================
+
     angle = BLOG_ANGLES[day % len(BLOG_ANGLES)]
 
-    # Приблизно кожен 7-й день — окремий DreamWay-контент,
-    # але лише якщо тема природно перетинається із запитами, вибором, цілями або перешкодами.
-    dreamway_keywords = ("запит", "вибір", "ціл", "рішення", "меж", "хочу", "самореал", "перешкод", "ресурс")
-    use_dreamway = (day % 7 == 3 and any(k in theme.lower() for k in dreamway_keywords))
+    dreamway_keywords = (
+        "запит",
+        "вибір",
+        "ціл",
+        "рішення",
+        "меж",
+        "хочу",
+        "самореал",
+        "перешкод",
+        "ресурс",
+    )
 
-    post = generate_dreamway_post(theme, angle) if use_dreamway else generate_post(theme, stage, angle)
-    label = "🎲 DREAMWAY-ПОСТ" if use_dreamway else "📝 ГОТОВИЙ ПОСТ ДЛЯ ПУБЛІКАЦІЇ"
+    use_dreamway = (
+        day % 7 == 3
+        and any(
+            keyword in theme.lower()
+            for keyword in dreamway_keywords
+        )
+    )
+
+    if use_dreamway:
+        post = generate_dreamway_post(
+            theme,
+            angle
+        )
+        label = "🎲 DREAMWAY-ПОСТ"
+    else:
+        post = generate_post(
+            theme,
+            stage,
+            angle
+        )
+        label = "📝 ГОТОВИЙ ПОСТ ДЛЯ ПУБЛІКАЦІЇ"
+
+    caption = f"{label}\n\n{post}"
 
     try:
-    send_photo(get_image(make_image_prompt(theme)), label + "\n\n" + post)
-except Exception:
-    send_text(label + "\n\n" + post)
-" + post)
+        image = get_image(
+            make_image_prompt(theme)
+        )
 
+        send_photo(
+            image,
+            caption
+        )
+
+    except Exception as e:
+        print(
+            "Фото не вдалося, надсилаю текст:",
+            e,
+            file=sys.stderr
+        )
+
+        send_text(
+            caption
+        )
 
 def main():
     print(">>> MAIN ПОЧАВСЯ", flush=True)
